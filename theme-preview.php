@@ -4,95 +4,13 @@ function is_wordpress_org_theme_preview() {
 	return true;
 }
 
-// add_action('init', function () {
-//     $starter_content = wp_parse_args( get_theme_starter_content(), [
-//         'widgets' => [],
-//         'attachments' => [],
-//         'posts' => [],
-//         'options' => [],
-//         'nav_menus' => [],
-//         'theme_mods' => [],
-//     ] );
-
-//     add_filter( 'pre_option_show_on_front', function () {
-//         return 'page';
-//     });
-
-//     add_filter( 'pre_option_page_on_front', function () {
-//         return 123;
-//     });
-
-//     add_filter( 'pre_option_page_for_posts', function () {
-//         return 456;
-//     });
-
-//     add_filter( 'redirect_canonical', '__return_false' );
-
-//     // add_filter( 'posts_pre_query', function($posts, $query) use ( $starter_content ) {
-//     //     if(! $query->is_main_query()) {
-//     //         return $posts;
-//     //     }
-
-//     //     if( ! empty($query->query_vars['page_id']) && 123 == $query->query_vars['page_id']) {
-//     //         $post_data = $starter_content['posts']['front'] + [ 'ID' => 123, 'comment_status' => 'closed' ];
-//     //         return [ get_post( (object) $post_data ) ];
-//     //     }
-
-//     //     if( ! empty($query->query['name']) && 'about' == $query->query['name']) {
-//     //         $post_data = $starter_content['posts']['about'];
-//     //         $post_data += [
-//     //             'post_name' => 'about',
-//     //             'comment_status' => 'closed',
-//     //         ];
-//     //         return [ get_post( (object) $post_data ) ];
-//     //     }
-
-//     //     return $posts;
-//     // }, 10, 2 );
-
-//     add_action('parse_request', function ($wp) {
-//         if ( isset($wp->query_vars['name']) && $wp->query_vars['name'] == 'blog') {
-//             $wp->query_vars = [
-//                 'pagename' => 'blog',
-//             ];
-//             $wp->matched_rule = "(.?.+?)(?:/([0-9]+))?/?$";
-//             $wp->matched_query = "pagename=blog&page=";
-//         }
-//     });
-
-//     add_action('parse_query', function ($query) use ( $starter_content ) {
-
-//         if (!$query->is_main_query()) {
-//             return;
-//         }
-
-//         if ('blog' == $query->query_vars['pagename']) {
-//             $post_data = $starter_content['posts']['blog'];
-//             $post_data += [
-//                 'post_name' => 'blog',
-//                 'comment_status' => 'closed',
-//                 'ID' => 456,
-//             ];
-
-//             $query->queried_object = get_post((object) $post_data);
-//             $query->queried_object_id = 456;
-//             $query->is_page       = false;
-//             $query->is_singular   = false;
-//             $query->is_home       = true;
-//             $query->is_posts_page = true;
-// 			$query->is_comment_feed = false;
-//         }
-//     }, 9999);
-
-// } );
-
 class WP_Themes_Theme_Preview {
     private $starter_content;
 
     public function __construct() {
         add_action( 'init', [ $this, 'init' ] );
-        add_filter( 'pre_get_shortlink', [ $this, 'disable_shortlink'], 9999 );
-        add_filter( 'redirect_canonical', '__return_false' );
+        remove_action( 'wp_head', 'wp_shortlink_wp_head', 10 );
+        remove_action( 'template_redirect', 'redirect_canonical' );
 
         add_action( 'wp_footer', [ $this, 'debug' ] );
     }
@@ -103,7 +21,7 @@ class WP_Themes_Theme_Preview {
 
         add_filter( 'posts_pre_query', [ $this, 'filter_post'], 10, 2 );
         add_action('parse_request', [ $this, 'filter_blog_request' ] );
-        add_filter( 'parse_query', [ $this, 'filter_blog_page_query'], 9999 );
+        add_filter( 'parse_query', [ $this, 'filter_blog_page_query'] );
     }
 
     public function set_starter_content() {
@@ -125,29 +43,34 @@ class WP_Themes_Theme_Preview {
             }
         }
 
-		foreach ( $starter_content['options'] as $name => $value ) {
+        if( ! empty( $starter_content['options'])) {
+            foreach ( $starter_content['options'] as $name => $value ) {
 
-			// Serialize the value to check for post symbols.
-			$value = maybe_serialize( $value );
+                // Serialize the value to check for post symbols.
+                $value = maybe_serialize( $value );
 
-			if ( preg_match( '/^{{(?P<symbol>.+)}}$/', $value, $matches ) ) {
-				if ( isset( $starter_content['posts'][ $matches['symbol'] ] ) ) {
-					$value = $starter_content['posts'][ $matches['symbol'] ]['ID'];
-				} elseif ( isset( $starter_content['attachments'][ $matches['symbol'] ] ) ) {
-					$value = $starter_content['attachments'][ $matches['symbol'] ];
-				} else {
-					continue;
+                if ( preg_match( '/^{{(?P<symbol>.+)}}$/', $value, $matches ) ) {
+                    if ( isset( $starter_content['posts'][ $matches['symbol'] ] ) ) {
+                        $value = $starter_content['posts'][ $matches['symbol'] ]['ID'];
+                    } elseif ( isset( $starter_content['attachments'][ $matches['symbol'] ] ) ) {
+                        $value = $starter_content['attachments'][ $matches['symbol'] ];
+                    } else {
+                        continue;
+                    }
+
+                    $starter_content['mapping'][$starter_content['options'][$name]] = $value;
+                    $starter_content['options'][$name] = $value;
                 }
-
-                $starter_content['mapping'][$starter_content['options'][$name]] = $value;
-                $starter_content['options'][$name] = $value;
-			}
-		}
+            }
+        }
 
         $this->starter_content = $starter_content;
     }
 
     public function set_options() {
+        if( empty( $this->starter_content['options'])) {
+            return;
+        }
         foreach( $this->starter_content['options'] as $option => $value) {
             add_filter( "pre_option_$option", function() use( $value ) {
                 return $value;
