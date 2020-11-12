@@ -7,21 +7,23 @@ function is_wordpress_org_theme_preview() {
 class WP_Themes_Theme_Preview {
     private $starter_content;
 
-    public function __construct() {
-        add_action( 'init', [ $this, 'init' ] );
-        remove_action( 'wp_head', 'wp_shortlink_wp_head', 10 );
-        remove_action( 'template_redirect', 'redirect_canonical' );
-
-        add_action( 'wp_footer', [ $this, 'debug' ] );
-    }
-
     public function init() {
         $this->set_starter_content();
+
+        if( empty( $this->starter_content)) {
+            return;
+        }
+
         $this->set_options();
 
         add_filter( 'posts_pre_query', [ $this, 'filter_post'], 10, 2 );
         add_action('parse_request', [ $this, 'filter_blog_request' ] );
         add_filter( 'parse_query', [ $this, 'filter_blog_page_query'] );
+
+        remove_action( 'wp_head', 'wp_shortlink_wp_head', 10 );
+        remove_action( 'template_redirect', 'redirect_canonical' );
+
+        add_action( 'wp_footer', [ $this, 'debug' ] );
     }
 
     public function set_starter_content() {
@@ -29,7 +31,9 @@ class WP_Themes_Theme_Preview {
 
         if( ! empty( $starter_content['posts'])) {
             foreach( array_keys( $starter_content['posts'] ) as $name ) {
-                $starter_content['posts'][$name]['ID'] = $this->generate_id( $name );
+                $post_id = $this->generate_id( $name );
+                $starter_content['posts'][$name]['ID'] = $post_id;
+                $starter_content['mapping'][$name] = $post_id;
                 $starter_content['posts'][$name]['post_name'] = $name;
                 if( $starter_content['posts'][$name]['post_type'] == 'page') {
                     $starter_content['posts'][$name][ 'comment_status'] = 'closed'; 
@@ -39,32 +43,22 @@ class WP_Themes_Theme_Preview {
 
         if( ! empty( $starter_content['attachments'])) {
             foreach( array_keys( $starter_content['attachments'] ) as $name ) {
-                $starter_content['attachments'][$name]['ID'] = $this->generate_id( $name );
+                $attachment_id = $this->generate_id( $name );
+                $starter_content['attachments'][$name]['ID'] = $attachment_id;
+                $starter_content['mapping'][$name] = $attachment_id;
             }
         }
 
-        if( ! empty( $starter_content['options'])) {
-            foreach ( $starter_content['options'] as $name => $value ) {
-
-                // Serialize the value to check for post symbols.
-                $value = maybe_serialize( $value );
-
-                if ( preg_match( '/^{{(?P<symbol>.+)}}$/', $value, $matches ) ) {
-                    if ( isset( $starter_content['posts'][ $matches['symbol'] ] ) ) {
-                        $value = $starter_content['posts'][ $matches['symbol'] ]['ID'];
-                    } elseif ( isset( $starter_content['attachments'][ $matches['symbol'] ] ) ) {
-                        $value = $starter_content['attachments'][ $matches['symbol'] ];
-                    } else {
-                        continue;
-                    }
-
-                    $starter_content['mapping'][$starter_content['options'][$name]] = $value;
-                    $starter_content['options'][$name] = $value;
+        array_walk_recursive( $starter_content, function( &$value) use ($starter_content) {
+            if ( preg_match( '/^{{(?P<symbol>.+)}}$/', $value, $matches ) ) {
+                if ( isset( $starter_content['mapping'][ $matches['symbol'] ] ) ) {
+                    $value =  $starter_content['mapping'][ $matches['symbol'] ];
                 }
             }
-        }
+        } );
 
         $this->starter_content = $starter_content;
+
     }
 
     public function set_options() {
@@ -159,9 +153,6 @@ class WP_Themes_Theme_Preview {
     }
 
     private function generate_id( $name = '' ) {
-        if( 'blog' === $name) {
-            return 123;
-        }
         return wp_rand( 1000, 10000 );
     }
 
@@ -177,4 +168,6 @@ class WP_Themes_Theme_Preview {
 
 }
 
-new WP_Themes_Theme_Preview;
+add_action('init', function() {
+    (new WP_Themes_Theme_Preview)->init();
+});
