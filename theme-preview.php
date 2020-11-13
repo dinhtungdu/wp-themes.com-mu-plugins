@@ -17,11 +17,9 @@ class WP_Themes_Theme_Preview {
         }
 
         $this->set_options();
-        $this->set_nav_menus();
-
-        add_filter( 'posts_pre_query', [ $this, 'filter_post'], 10, 2 );
-        add_action('parse_request', [ $this, 'filter_blog_request' ] );
-        add_filter( 'parse_query', [ $this, 'filter_blog_page_query'] );
+        $this->filter_posts();
+        $this->filter_nav_menus();
+        $this->filter_post_thumbnails();
 
         remove_action( 'wp_head', 'wp_shortlink_wp_head', 10 );
         remove_action( 'template_redirect', 'redirect_canonical' );
@@ -29,7 +27,53 @@ class WP_Themes_Theme_Preview {
         add_action( 'wp_footer', [ $this, 'debug' ] );
     }
 
-    public function set_nav_menus() {
+    public function filter_posts() {
+        add_filter( 'posts_pre_query', [ $this, 'filter_page_query'], 10, 2 );
+        add_action('parse_request', [ $this, 'filter_blog_request' ] );
+        add_filter( 'parse_query', [ $this, 'filter_blog_page_query'] );
+    }
+
+    public function filter_post_thumbnails() {
+
+        add_filter( 'get_post_metadata', function( $value, $post_id, $meta_key ) {
+            if(
+                ! in_array( $post_id, array_values($this->mapping['posts']))
+                || '_thumbnail_id' !== $meta_key
+            ) {
+                return $value;
+            }
+
+            $post_data = $this->find_data_by_id($post_id);
+            if( empty($post_data['thumbnail'])) {
+                return $value;
+            }
+            return $post_data['thumbnail'];
+        }, 10, 3 );
+
+        add_filter('wp_get_attachment_image_src', function( $image, $attachment_id, $size) {
+            $image_data = $this->find_data_by_id( $attachment_id, 'attachments');
+            if( empty( $image_data)) {
+                return $image;
+            }
+            $image_url = sprintf(
+                '%1$s/%2$s',
+                untrailingslashit( get_template_directory_uri() ),
+                ltrim($image_data['file'],'/')
+            );
+
+            $image_sizes = wp_get_registered_image_subsizes();
+            $width = 0;
+            $height = 0;
+            if( !empty($image_sizes[$size])) {
+                $width = $image_sizes[$size]['width'];
+                $height = $image_sizes[$size]['height'];
+            }
+
+            return [ $image_url, $width, $height ];
+        }, 10, 3);
+    }
+
+    public function filter_nav_menus() {
         if( empty($this->starter_content['nav_menus'])) {
             return;
         }
@@ -142,12 +186,12 @@ class WP_Themes_Theme_Preview {
             }
         }
 
-        // if( ! empty( $starter_content['attachments'])) {
-        //     foreach( array_keys( $starter_content['attachments'] ) as $name ) {
-        //         $this->mapping['posts'][$name] = $this->generate_id();
-        //         $starter_content['attachments'][$name]['ID'] = $this->mapping['posts'][$name];
-        //     }
-        // }
+        if( ! empty( $starter_content['attachments'])) {
+            foreach( $starter_content['attachments'] as $name => &$data) {
+                $this->mapping['attachments'][$name] = $this->generate_id();
+                $data['ID'] = $this->mapping['attachments'][$name];
+            }
+        }
 
         if( ! empty( $starter_content['nav_menus'])) {
             foreach( $starter_content['nav_menus'] as $name => &$data ) {
@@ -157,10 +201,13 @@ class WP_Themes_Theme_Preview {
             }
         }
 
-        array_walk_recursive( $starter_content, function( &$value) use ($starter_content) {
+        array_walk_recursive( $starter_content, function( &$value) {
             if ( preg_match( '/^{{(?P<symbol>.+)}}$/', $value, $matches ) ) {
                 if ( isset( $this->mapping['posts'][ $matches['symbol'] ] ) ) {
                     $value =  $this->mapping['posts'][ $matches['symbol'] ];
+                }
+                elseif ( isset( $this->mapping['attachments'][ $matches['symbol'] ] ) ) {
+                    $value =  $this->mapping['attachments'][ $matches['symbol'] ];
                 }
             }
         } );
@@ -184,8 +231,8 @@ class WP_Themes_Theme_Preview {
         return '';
     }
 
-    public function filter_post($posts, $query) {
-        if(! $query->is_main_query() || empty($this->starter_content['options']['page_on_front'] )) {
+    public function filter_page_query($posts, $query) {
+        if(! $query->is_main_query() ) {
             return $posts;
         }
 
