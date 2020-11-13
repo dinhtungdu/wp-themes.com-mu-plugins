@@ -137,8 +137,8 @@ class WP_Themes_Theme_Switcher {
 		$hostname = parse_url( $url, PHP_URL_HOST );
 
 		$url = str_replace(	
-			$hostname . '/',
-			$hostname . '/' . $this->stylesheet() . '/',
+			$hostname,
+			$hostname . '/' . $this->stylesheet(),
 			$url
 		);
 

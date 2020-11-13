@@ -7,6 +7,8 @@ function is_wordpress_org_theme_preview() {
 class WP_Themes_Theme_Preview {
     private $starter_content;
 
+    private $mapping = [];
+
     public function init() {
         $this->set_starter_content();
 
@@ -15,6 +17,7 @@ class WP_Themes_Theme_Preview {
         }
 
         $this->set_options();
+        $this->set_nav_menus();
 
         add_filter( 'posts_pre_query', [ $this, 'filter_post'], 10, 2 );
         add_action('parse_request', [ $this, 'filter_blog_request' ] );
@@ -26,33 +29,138 @@ class WP_Themes_Theme_Preview {
         add_action( 'wp_footer', [ $this, 'debug' ] );
     }
 
+    public function set_nav_menus() {
+        if( empty($this->starter_content['nav_menus'])) {
+            return;
+        }
+
+        add_filter( 'has_nav_menu', function( $has_nav_menu, $location ) {
+            if( empty($this->starter_content['nav_menus'][$location])) {
+                return $has_nav_menu;
+            }
+            return true;
+        }, 10, 2);
+
+        add_filter( 'theme_mod_nav_menu_locations', function() {
+            return $this->mapping['nav_menus'];
+        });
+
+        add_filter( 'wp_get_nav_menu_object', function( $menu_objects, $menu ) {
+            foreach( $this->mapping['nav_menus'] as $location => $menu_id ) {
+                if( $menu_id != $menu ) {
+                    continue;
+                }
+                $menu_objects = new WP_Term( (object) [
+                    'taxonomy' => 'nav_menu',
+                    'term_id' => $menu_id,
+                    'slug' => $location,
+                    'name' => $this->starter_content['nav_menus'][$location]['name'],
+                    'term_taxonomy_id' => $menu_id,
+                    'count' => count( $this->starter_content['nav_menus'][$location]['items']),
+                ] );
+            }
+
+            return $menu_objects;
+        }, 10, 2 );
+
+        add_filter( 'wp_get_nav_menu_items', function ($items, $menu, $args) {
+            foreach( $this->mapping['nav_menus'] as $location => $menu_id ) {
+                if( $menu_id != $menu->term_id ) {
+                    continue;
+                }
+
+                $menu_items = [];
+                foreach( $this->starter_content['nav_menus'][$location]['items'] as $index => $item ) {
+                    $item = wp_parse_args($item, [
+                        'db_id'   => 0,
+                        'object_id'   => 0,
+                        'object'      => '',
+                        'parent_id'   => 0,
+                        'position'    => 0,
+                        'type'        => 'custom',
+                        'title'       => '',
+                        'url'         => '',
+                        'description' => '',
+                        'attr-title'  => '',
+                        'target'      => '',
+                        'classes'     => '',
+                        'xfn'         => '',
+                        'status'      => '',
+                        'menu_order' => $index, 
+                        'menu_item_parent' => 0,
+                        'post_parent' => 0,
+                        'ID' => $this->generate_id(),
+                    ]);
+
+                    if( $item['type'] === 'custom') {
+                        $item['object'] = 'custom';
+                    }
+
+                    if( ! empty( $item['title']) && !empty($item['url'])) {
+                        $menu_items[] = (object) $item;
+                        continue;
+                    }
+
+                    if( !empty($item['object_id']) && $item['type'] === 'post_type') {
+                        foreach( $this->mapping['posts'] as $name => $id) {
+                            if( $id !== $item['object_id']) {
+                               continue;
+                            }
+                            $post_data = $this->find_data_by_id( $item['object_id']);
+                            if(  empty($post_data)) {
+                                continue;
+                            }
+                            $item['url'] = home_url($post_data['post_name']);
+                            $item['title'] = $post_data['post_title'];
+
+                            $menu_items[] = (object) $item;
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            if( empty( $menu_items)) {
+                return $items;
+            }
+            return $menu_items;
+        }, 10, 3 );
+
+    }
+
     public function set_starter_content() {
         $starter_content = get_theme_starter_content();
 
         if( ! empty( $starter_content['posts'])) {
-            foreach( array_keys( $starter_content['posts'] ) as $name ) {
-                $post_id = $this->generate_id( $name );
-                $starter_content['posts'][$name]['ID'] = $post_id;
-                $starter_content['mapping'][$name] = $post_id;
-                $starter_content['posts'][$name]['post_name'] = $name;
-                if( $starter_content['posts'][$name]['post_type'] == 'page') {
-                    $starter_content['posts'][$name][ 'comment_status'] = 'closed'; 
+            foreach( $starter_content['posts'] as $name => &$data) {
+                $this->mapping['posts'][$name] = $this->generate_id( $name );
+                $data['ID'] = $this->mapping['posts'][$name];
+                $data['post_name'] = $name;
+                if( $data['post_type'] == 'page') {
+                    $data['comment_status'] = 'closed'; 
                 }
             }
         }
 
-        if( ! empty( $starter_content['attachments'])) {
-            foreach( array_keys( $starter_content['attachments'] ) as $name ) {
-                $attachment_id = $this->generate_id( $name );
-                $starter_content['attachments'][$name]['ID'] = $attachment_id;
-                $starter_content['mapping'][$name] = $attachment_id;
+        // if( ! empty( $starter_content['attachments'])) {
+        //     foreach( array_keys( $starter_content['attachments'] ) as $name ) {
+        //         $this->mapping['posts'][$name] = $this->generate_id();
+        //         $starter_content['attachments'][$name]['ID'] = $this->mapping['posts'][$name];
+        //     }
+        // }
+
+        if( ! empty( $starter_content['nav_menus'])) {
+            foreach( $starter_content['nav_menus'] as $name => &$data ) {
+                $nav_menu_id = $this->generate_id();
+                $this->mapping['nav_menus'][$name] = $nav_menu_id;
+                $data['ID'] = $this->mapping['nav_menus'][$name];
             }
         }
 
         array_walk_recursive( $starter_content, function( &$value) use ($starter_content) {
             if ( preg_match( '/^{{(?P<symbol>.+)}}$/', $value, $matches ) ) {
-                if ( isset( $starter_content['mapping'][ $matches['symbol'] ] ) ) {
-                    $value =  $starter_content['mapping'][ $matches['symbol'] ];
+                if ( isset( $this->mapping['posts'][ $matches['symbol'] ] ) ) {
+                    $value =  $this->mapping['posts'][ $matches['symbol'] ];
                 }
             }
         } );
@@ -152,7 +260,10 @@ class WP_Themes_Theme_Preview {
         return [];
     }
 
-    private function generate_id( $name = '' ) {
+    private function generate_id( $page_name = '' ) {
+        if( $page_name && $page = get_page_by_path($page_name) ) {
+            return $page->ID;
+        }
         return wp_rand( 1000, 10000 );
     }
 
