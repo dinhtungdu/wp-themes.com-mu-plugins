@@ -20,6 +20,7 @@ class WP_Themes_Theme_Preview {
         $this->filter_posts();
         $this->filter_nav_menus();
         $this->filter_post_thumbnails();
+        $this->filter_sidebars();
 
         remove_action( 'wp_head', 'wp_shortlink_wp_head', 10 );
         remove_action( 'template_redirect', 'redirect_canonical' );
@@ -170,6 +171,77 @@ class WP_Themes_Theme_Preview {
             return $menu_items;
         }, 10, 3 );
 
+    }
+
+    public function filter_sidebars() {
+        if( empty ( $this->starter_content['widgets'] ) ) {
+            return;
+        }
+
+        $widgets = [];
+        $widgets_options = [];
+
+        $number = 1;
+        foreach( $this->starter_content['widgets'] as $sidebar => $sidebar_widgets) {
+            foreach( $sidebar_widgets as $widget ) {
+                $widgets[] = [
+                    'number' => $number,
+                    'type' => $widget[0],
+                    'sidebar' => $sidebar,
+                    'settings' => $widget[1],
+                ];
+                $widgets_options[$widget[0]][$number] = $widget[1];
+                $number++;
+            }
+        }
+
+        foreach( $widgets_options as $type => $options ) {
+            add_filter( "pre_option_widget_$type", function() use ( $options ) {
+                return $options;
+            });
+        }
+
+        foreach( $this->starter_content['widgets'] as $sidebar => $sidebar_widgets) {
+            add_filter( 'is_active_sidebar', function( $is_active_sidebar, $index ) use ($sidebar) {
+                    if( $index == $sidebar ) {
+                            return true;
+                    }
+                    return $is_active_sidebar;
+            }, 10, 2 );
+        }
+        add_filter( 'sidebars_widgets', function() use ( $widgets ) {
+            $sidebars_widgets = [];
+            foreach ( $widgets as $widget) {
+                list('type' => $type, 'number' => $number) = $widget;
+                $sidebars_widgets[$widget['sidebar']][] = "$type-$number";
+            }
+            return $sidebars_widgets;
+        } );
+
+        foreach ( $widgets as $widget) {
+            list('type' => $type, 'number' => $number) = $widget;
+            $widget_class = $this->get_widget_class_from_type( $type );
+            if( ! $widget_class ) {
+                continue;
+            }
+            wp_register_sidebar_widget(
+                "$type-$number",
+                $widget_class->id_base,
+                [$widget_class, 'display_callback'],
+                ['classname' => "widget_$type"],
+                ['number' => $number]
+            );
+        }
+    }
+
+    private function get_widget_class_from_type( $type ) {
+        global $wp_widget_factory;
+        foreach ( $wp_widget_factory->widgets as $widget) {
+            if( $widget->id_base === $type) {
+                return $widget;
+            }
+        }
+        return false;
     }
 
     public function set_starter_content() {
