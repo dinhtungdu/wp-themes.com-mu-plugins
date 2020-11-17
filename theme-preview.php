@@ -18,19 +18,47 @@ class WP_Themes_Theme_Preview {
 		}
 
 		$this->set_options();
+		$this->cache_posts();
+
 		$this->filter_posts();
 		$this->filter_nav_menus();
 		$this->filter_post_thumbnails();
 		$this->filter_sidebars();
+		$this->filter_theme_mods();
+	}
 
-		// Caononical causes redirect loop.
-		remove_action( 'template_redirect', 'redirect_canonical' );
+	public function cache_posts() {
+		foreach ( $this->starter_content['posts'] as $post ) {
+
+			wp_cache_add( $post['ID'], (object) $post, 'posts' );
+			if ( 'page' === $post['post_type'] ) {
+				$last_changed = wp_cache_get_last_changed( 'posts' );
+				$hash         = md5( $post['post_name'] . serialize( $post['post_type'] ) );
+				$cache_key    = "get_page_by_path:$hash:$last_changed";
+				wp_cache_set( $cache_key, $post['ID'], 'posts' );
+			}
+		}
+	}
+
+	public function filter_theme_mods() {
+		if ( empty( $this->starter_content['theme_mods'] ) ) {
+			return;
+		}
+		foreach ( $this->starter_content['theme_mods'] as $key => $theme_mod ) {
+			add_filter(
+				"theme_mod_$key",
+				function() use ( $theme_mod ) {
+					return $theme_mod;
+				}
+			);
+		}
 	}
 
 	public function filter_posts() {
 		add_filter( 'posts_pre_query', array( $this, 'filter_page_query' ), 10, 2 );
-		add_action( 'parse_request', array( $this, 'filter_blog_request' ) );
-		add_filter( 'parse_query', array( $this, 'filter_blog_page_query' ) );
+
+		// Canonical causes redirect loop.
+		remove_action( 'template_redirect', 'redirect_canonical' );
 	}
 
 	public function filter_post_thumbnails() {
@@ -343,7 +371,8 @@ class WP_Themes_Theme_Preview {
 			return $posts;
 		}
 
-		$front_page_id = $this->starter_content['options']['page_on_front'];
+		$front_page_id  = $this->starter_content['options']['page_on_front'];
+		$blog_post_name = $this->get_blog_post_name();
 
 		if ( ! empty( $query->query_vars['page_id'] )
 			&& $front_page_id == $query->query_vars['page_id']
@@ -355,41 +384,11 @@ class WP_Themes_Theme_Preview {
 			return array( get_post( (object) $this->starter_content['posts'][ $query->query['name'] ] ) );
 		}
 
+		if ( ! empty( $query->query['pagename'] ) && ! empty( $this->starter_content['posts'][ $query->query['pagename'] ] ) && $blog_post_name !== $query->query['pagename'] ) {
+			return array( get_post( (object) $this->starter_content['posts'][ $query->query['pagename'] ] ) );
+		}
+
 		return $posts;
-	}
-
-	public function filter_blog_request( $wp ) {
-		$blog_post_name = $this->get_blog_post_name();
-		if ( isset( $wp->query_vars['name'] ) && $wp->query_vars['name'] == $blog_post_name ) {
-			$wp->query_vars    = array(
-				'pagename' => $blog_post_name,
-			);
-			$wp->matched_rule  = '(.?.+?)(?:/([0-9]+))?/?$';
-			$wp->matched_query = "pagename=$blog_post_name&page=";
-		}
-	}
-
-	public function filter_blog_page_query( $query ) {
-
-		if ( ! $query->is_main_query() ) {
-			return;
-		}
-
-		$blog_post_name = $this->get_blog_post_name();
-
-		if ( ! $blog_post_name || $blog_post_name !== $query->query_vars['pagename'] ) {
-			return;
-		}
-
-		$post_data = $this->starter_content['posts'][ $blog_post_name ];
-
-		$query->queried_object    = get_post( (object) $post_data );
-		$query->queried_object_id = $post_data['ID'];
-		$query->is_page           = false;
-		$query->is_singular       = false;
-		$query->is_home           = true;
-		$query->is_posts_page     = true;
-		$query->is_comment_feed   = false;
 	}
 
 	private function get_blog_post_name() {
